@@ -1,42 +1,50 @@
-let s:ParaListStack = []
-let s:FlagStack = []
+" TODO
+" Add a function for ) : call EncloseFunction and AddRemoveFlag
+"
+" TODO
+" 1. paralist selectable
+" 2. automatic update tagfile (collabrate with taglist)
+" 3. omnifunction for echo patern
 
 let s:MatchPairs = { ')':'(', '}':'{', ']':'[', '>':'<', "'":"'", "\"":"\""}
+
+" TODO change delimiter to a buffer variable
+" here is a global variable for prototype
+let g:delimiter = ','
 
 " DEBUG
 function! DebugEcho(variable)
     return eval("s:".a:variable)
 endfunction
 
-function! IsEchoMode(punc)
-    if empty(s:FlagStack)
-        return 0
-    else
-        if (a:punc == 'comma') && (s:FlagStack[-1] != 'i')
-            return 0
-        else
-            return 1
-        endif
+function! Initiate()
+    if !exists("b:ParaListStack")
+        let b:ParaListStack = []
+    endif
+    if !exists("b:FlagStack")
+        let b:FlagStack = []
+    endif
+    if empty(b:FlagStack)
+        call add(b:FlagStack, '(')
     endif
 endfunction
 
 function! AddRemoveFlag(flag)
-    if get(s:FlagStack, -1) !~ "[\"\']"
+    if get(b:FlagStack, -1) !~ "[\"\']"
         if a:flag =~ "[([{<'\"]"
-            call add(s:FlagStack, a:flag)
+            call add(b:FlagStack, a:flag)
         elseif a:flag =~ "[)}>\\]]"
-            if s:MatchPairs[a:flag] == s:FlagStack[-1]
-                call remove(s:FlagStack, -1)
+            if s:MatchPairs[a:flag] == b:FlagStack[-1]
+                call remove(b:FlagStack, -1)
             endif
-        else
-            " echo error
         endif
     else
-        if s:MatchPairs[a:flag] == s:FlagStack[-1]
-            call remove(s:FlagStack, -1)
+        " if flag is d'quotation or s'quotation then remove last flag
+        " because last flag is assumed to be d'quotation or s'quotation
+        if s:MatchPairs[a:flag] == b:FlagStack[-1]
+            call remove(b:FlagStack, -1)
         endif
     endif
-
     return a:flag
 endfunction
 
@@ -68,73 +76,94 @@ endfunction
 
 function! GetParameterList(functag)
     let declaration = a:functag['cmd']
-    let parameters = substitute(declaration, '\/\^.\{-}\(\k\+::\)*\~\?\k*(\(.\{-}\)):\$\/', '\2', "")
-    let paralist = split(parameters, '\s*,\s*')
-
+    " TODO Need to support more language
+    " Current : Vim, Python
+    let parameters = substitute(declaration, '\/\^.\{-}\(\k\+::\)*\~\?\k*(\(.\{-}\)):\?\$\/', '\2', "")
+    let paralist = split(parameters, '\s*'.g:delimiter.'\s*')
     return paralist
 endfunction
 
 function! SelectWord(word)
-    let col = match(getline('.'), a:word) + 1
+    let col = match(getline('.'), a:word, col('.')) + 1
     call cursor(line('.'), col)
-    exec 'normal v'.(strlen(a:word) - 1)."l\<c-g>"
+    return "\<c-c>lv".(strlen(a:word) - 1)."l\<c-g>"
 endfunction
 
-function! JumpToNextParameter()
-    let paralist = s:ParaListStack[-1]
-
-    call SelectWord(paralist[0])
-    call remove(paralist, 0)
-    if empty(paralist)
-        call ExitEchoMode()
+function! NextParameter(trigger)
+    if !empty(b:ParaListStack) && b:FlagStack[-1] == 'i'
+        let paralist = b:ParaListStack[-1]
+        let word = paralist[0]
+        call remove(paralist, 0)
+        if empty(paralist)
+            call ExitEchoMode()
+        endif
+        return SelectWord(word)
+    else
+        return a:trigger
     endif
 endfunction
 
 function! EncloseFunction()
-
+    if !empty(b:ParaListStack[-1])
+        let cmd = "\<c-c>f".g:delimiter."dt)a"
+    else
+        let cmd = "\<c-c>f)a"
+    endif
+    call ExitEchoMode()
+    return cmd
 endfunction
 
 function! ExpandParameters(paralist)
-    call setline('.', getline('.').join(a:paralist, ", ").")")
+    " TODO There is a bug in the situation that cursor is in the middle of line
+    " Consider place the cursor at where
+    call setline('.', getline('.').join(a:paralist,  g:delimiter." ").")")
 endfunction
 
 function! EnterEchoMode()
-    let funcname = GetFuncName(getline('.')[:(col('.')-2)])
+    call Initiate()
+
+    let funcname = GetFuncName(getline('.')[:(col('.')-3)])
     let funcpat = escape(funcname, "[\*~^")
     let functagS = CallTagList("^".funcpat.'$')
 
-    " ProtoType
-    if empty(s:FlagStack)
-        call add(s:FlagStack, '(')
-    endif
-    call add(s:FlagStack, 'i')
+    call add(b:FlagStack, 'i')
     let paralist = GetParameterList(functagS[0])
-    call ExpandParameters(paralist)
-    call add(s:ParaListStack, paralist)
-    call JumpToNextParameter()
+    if !empty(paralist)
+        call ExpandParameters(paralist)
+        call add(b:ParaListStack, paralist)
+        return NextParameter("")
+    else
+        return ")"
+    endif
 endfunction
 
 function! ExitEchoMode()
-    call remove(s:ParaListStack, -1)
-    " find 'i' from rear and remove it along with previous bracket
-    while s:FlagStack[-1] != 'i'
-        call remove(s:FlagStack, -1)
+    " Pop latest function's paralist from stack
+    call remove(b:ParaListStack, -1)
+    " Find 'i' from rear and remove it along with previous bracket
+    while b:FlagStack[-1] != 'i'
+        call remove(b:FlagStack, -1)
     endwhile
-    call remove(s:FlagStack, -1)
-    call remove(s:FlagStack, -1)
+    " Pop '(' and 'i'
+    call remove(b:FlagStack, -2, -1)
 endfunction
 
 function! AbortEchoMode()
+    let b:ParaListStack = []
+    let b:FlagStack = []
 endfunction
 
+" TODO Add smap
 " ProtoType
-inoremap <F5> <C-O>:call EnterEchoMode()<CR>
-inoremap <expr>, IsEchoMode('comma') ? "<C-O>:<C-U>call JumpToNextParameter()<CR>" : ','
-inoremap <expr>[ IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag('[')<CR>" : '['
-inoremap <expr>] IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag(']')<CR>" : ']'
-inoremap <expr>( IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag('(')<CR>" : '('
-inoremap <expr>) IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag(')')<CR>" : ')'
-inoremap <expr>{ IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag('{')<CR>" : '{'
-inoremap <expr>} IsEchoMode('brackets') ? "<C-R>=AddRemoveFlag('}')<CR>" : '}'
-inoremap <expr>" IsEchoMode('quota') ? '<C-R>=AddRemoveFlag("\"")<CR>' : '"'
-inoremap <expr>' IsEchoMode('quota') ? "<C-R>=AddRemoveFlag(\"\\'\")<CR>" : "\'"
+inoremap <F6> <C-R>=EnterEchoMode()<CR>
+inoremap , <C-R>=NextParameter(',')<CR>
+snoremap , <C-C>a<C-R>=NextParameter(',')<CR>
+inoremap ) <C-R>=EncloseFunction()<CR>
+snoremap ) <C-C>a<C-R>=EncloseFunction()<CR>
+inoremap ( <C-R>=AddRemoveFlag('(')<CR>
+inoremap [ <C-R>=AddRemoveFlag('[')<CR>
+inoremap ] <C-R>=AddRemoveFlag(']')<CR>
+inoremap { <C-R>=AddRemoveFlag('{')<CR>
+inoremap } <C-R>=AddRemoveFlag('}')<CR>
+inoremap " <C-R>=AddRemoveFlag('"')<CR>
+inoremap ' <C-R>=AddRemoveFlag('\'')<CR>
