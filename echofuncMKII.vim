@@ -90,13 +90,10 @@ function! SelectWord(word)
 endfunction
 
 function! NextParameter(trigger)
-    if !empty(b:ParaListStack) && b:FlagStack[-1] == 'i'
+    if !empty(b:ParaListStack) && !empty(b:ParaListStack[-1]) && b:FlagStack[-1] == 'i' 
         let paralist = b:ParaListStack[-1]
         let word = paralist[0]
         call remove(paralist, 0)
-        if empty(paralist)
-            call ExitEchoMode()
-        endif
         return SelectWord(word)
     else
         return a:trigger
@@ -104,13 +101,17 @@ function! NextParameter(trigger)
 endfunction
 
 function! EncloseFunction()
-    if !empty(b:ParaListStack[-1])
-        let cmd = "\<c-c>f".g:delimiter."dt)a"
+    if !empty(b:ParaListStack)
+        if !empty(b:ParaListStack[-1])
+            let cmd = "\<c-c>f".g:delimiter."dt)a"
+        else
+            let cmd = "\<c-c>f)a"
+        endif
+        call ExitEchoMode()
+        return cmd
     else
-        let cmd = "\<c-c>f)a"
+        return ')'
     endif
-    call ExitEchoMode()
-    return cmd
 endfunction
 
 function! ExpandParameters(paralist)
